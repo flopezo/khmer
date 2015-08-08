@@ -1,3 +1,8 @@
+2015-08-08  Titus Brown  <titus@idyll.org
+
+   * khmer/khmer_args.py: suppress -x/--max-tablesize and -N/--num_tables
+   parameters in scripts that do graph creation.
+
 2015-08-07  Michael R. Crusoe  <crusoe@ucdavis.edu>
 
    * scripts/*.py,tests/*.py,sandbox/*.py,khmer/*.py,oxli/*.py:
