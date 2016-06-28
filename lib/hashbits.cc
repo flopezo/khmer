@@ -1,10 +1,40 @@
-//
-// This file is part of khmer, https://github.com/dib-lab/khmer/, and is
-// Copyright (C) Michigan State University, 2009-2015. It is licensed under
-// the three-clause BSD license; see LICENSE.
-// Contact: khmer-project@idyll.org
-//
+/*
+This file is part of khmer, https://github.com/dib-lab/khmer/, and is
+Copyright (C) 2010-2015, Michigan State University.
+Copyright (C) 2015, The Regents of the University of California.
 
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+
+    * Neither the name of the Michigan State University nor the names
+      of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written
+      permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+LICENSE (END)
+
+Contact: khmer-project@idyll.org
+*/
 #include <errno.h>
 #include <sstream> // IWYU pragma: keep
 
@@ -26,6 +56,7 @@ void Hashbits::save(std::string outfilename)
     unsigned int save_ksize = _ksize;
     unsigned char save_n_tables = _n_tables;
     unsigned long long save_tablesize;
+    unsigned long long save_occupied_bins = _occupied_bins;
 
     ofstream outfile(outfilename.c_str(), ios::binary);
 
@@ -38,6 +69,8 @@ void Hashbits::save(std::string outfilename)
 
     outfile.write((const char *) &save_ksize, sizeof(save_ksize));
     outfile.write((const char *) &save_n_tables, sizeof(save_n_tables));
+    outfile.write((const char *) &save_occupied_bins,
+                  sizeof(save_occupied_bins));
 
     for (unsigned int i = 0; i < _n_tables; i++) {
         save_tablesize = _tablesizes[i];
@@ -91,6 +124,7 @@ void Hashbits::load(std::string infilename)
         unsigned int save_ksize = 0;
         unsigned char save_n_tables = 0;
         unsigned long long save_tablesize = 0;
+        unsigned long long save_occupied_bins = 0;
         char signature[4];
         unsigned char version, ht_type;
 
@@ -120,9 +154,11 @@ void Hashbits::load(std::string infilename)
 
         infile.read((char *) &save_ksize, sizeof(save_ksize));
         infile.read((char *) &save_n_tables, sizeof(save_n_tables));
+        infile.read((char *) &save_occupied_bins, sizeof(save_occupied_bins));
 
         _ksize = (WordLength) save_ksize;
         _n_tables = (unsigned int) save_n_tables;
+        _occupied_bins = save_occupied_bins;
         _init_bitstuff();
 
         _counts = new Byte*[_n_tables];
@@ -156,122 +192,6 @@ void Hashbits::load(std::string infilename)
     }
 }
 
-/**
- * Checks for non-ACGT characters before consuming read.
- * This is specifically for counting overlap k-mers.
- */
-unsigned int Hashbits::check_and_process_read_overlap(std::string &read,
-        bool &is_valid,
-        Hashbits &ht2)
-{
-    is_valid = check_and_normalize_read(read);
-
-    if (!is_valid) {
-        return 0;
-    }
-
-    return consume_string_overlap(read, ht2);
-}
-
-/**
- * Consume a FASTA file of reads.
- */
-void Hashbits::consume_fasta_overlap(const std::string &filename,
-                                     HashIntoType curve[2][100],Hashbits &ht2,
-                                     unsigned int &total_reads,
-                                     unsigned long long &n_consumed)
-{
-    total_reads = 0;
-    n_consumed = 0;
-    Read read;
-
-//get total number of reads in dataset
-
-    IParser* parser = IParser::get_parser(filename.c_str());
-    while(!parser->is_complete())  {
-        try {
-            read = parser->get_next_read();
-        } catch (NoMoreReadsAvailable &exc) {
-            break;
-        }
-        total_reads++;
-    }
-//block size for curve
-    int block_size = total_reads/100;
-
-// reads number <100, block size =1
-    if (block_size == 0) {
-        block_size = 1;
-    }
-// set the remaining as 0
-    for (int n=total_reads; n<100; n++) {
-        curve[0][n] = 0;
-        curve[1][n] = 0;
-    }
-
-    total_reads = 0;
-
-    delete parser;
-    parser = IParser::get_parser(filename.c_str());
-
-
-
-    string currSeq = "";
-
-    //
-    // iterate through the FASTA file & consume the reads.
-    //
-
-    while(!parser->is_complete())  {
-        try {
-            read = parser->get_next_read();
-        } catch (NoMoreReadsAvailable &exc) {
-            break;
-        }
-        currSeq = read.sequence;
-
-        unsigned int this_n_consumed;
-        bool is_valid;
-
-        this_n_consumed = check_and_process_read_overlap(currSeq,
-                          is_valid, ht2);
-
-        n_consumed += this_n_consumed;
-
-        // reset the sequence info, increment read number
-
-        total_reads++;
-
-        if (total_reads%block_size == 0) {
-            curve[0][total_reads/block_size-1] = n_overlap_kmers();
-            curve[1][total_reads/block_size-1] = n_unique_kmers();
-        }
-    } // while
-
-    delete parser;
-}
-
-/**
- * Run through every k-mer in the given string, & hash it.
- */
-unsigned int Hashbits::consume_string_overlap(const std::string &s,
-        Hashbits &ht2)
-{
-    const char * sp = s.c_str();
-    unsigned int n_consumed = 0;
-
-    KMerIterator kmers(sp, _ksize);
-
-    while(!kmers.done()) {
-        HashIntoType kmer = kmers.next();
-
-        count_overlap(kmer,ht2);
-        n_consumed++;
-    }
-
-    return n_consumed;
-}
-
 void Hashbits::update_from(const Hashbits &other)
 {
     if (_ksize != other._ksize) {
@@ -280,6 +200,7 @@ void Hashbits::update_from(const Hashbits &other)
     if (_tablesizes != other._tablesizes) {
         throw khmer_exception("both nodegraphs must have same table sizes");
     }
+    Byte tmp = 0;
     for (unsigned int table_num = 0; table_num < _n_tables; table_num++) {
         Byte * me = _counts[table_num];
         Byte * ot = other._counts[table_num];
@@ -287,7 +208,23 @@ void Hashbits::update_from(const Hashbits &other)
         HashIntoType tablebytes = tablesize / 8 + 1;
 
         for (HashIntoType index = 0; index < tablebytes; index++) {
-            me[index] |= ot[index];     // bitwise or
+            // Bloom filters can be unioned with bitwise OR.
+            // First, get the new value
+            tmp = me[index] | ot[index];
+            if (table_num == 0) {
+                // We'd like for the merged filter to have an accurate
+                // count of occupied bins.  First, observe that
+                // HammingDistance(x,y) is equivalent to
+                // HammingWeight(x^y).  Then, observe that the number
+                // of additional occupied bins from the update is the
+                // hamming distance between the original bin and the
+                // OR'd bin. Thus, we can use the builtin popcountll
+                // function, which calls a hardware instruction for
+                // hamming weight, with the original and merged bin,
+                // to find the number of additional occupied bins.
+                _occupied_bins += __builtin_popcountll(me[index] ^ tmp);
+            }
+            me[index] = tmp;
         }
     }
 }

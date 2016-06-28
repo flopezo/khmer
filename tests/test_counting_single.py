@@ -1,25 +1,55 @@
+# This file is part of khmer, https://github.com/dib-lab/khmer/, and is
+# Copyright (C) 2010-2015, Michigan State University.
+# Copyright (C) 2015-2016, The Regents of the University of California.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#
+#     * Redistributions in binary form must reproduce the above
+#       copyright notice, this list of conditions and the following
+#       disclaimer in the documentation and/or other materials provided
+#       with the distribution.
+#
+#     * Neither the name of the Michigan State University nor the names
+#       of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written
+#       permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Contact: khmer-project@idyll.org
+# pylint: disable=C0111,C0103,missing-docstring,no-member,protected-access
+
 from __future__ import print_function
 from __future__ import absolute_import
-#
-# This file is part of khmer, https://github.com/dib-lab/khmer/, and is
-# Copyright (C) Michigan State University, 2009-2015. It is licensed under
-# the three-clause BSD license; see LICENSE.
-# Contact: khmer-project@idyll.org
-#
-
-# pylint: disable=C0111,C0103
 
 import khmer
+
+import pytest
 from . import khmer_tst_utils as utils
-from nose.plugins.attrib import attr
+
 
 MAX_COUNT = 255
 
 
-@attr('huge')
+@pytest.mark.huge
 def test_toobig():
     try:
-        ct = khmer.Countgraph(4, 1000000000000, 1)
+        khmer.Countgraph(4, 1000000000000, 1)
         assert 0, "this should fail"
     except MemoryError as err:
         print(str(err))
@@ -49,19 +79,12 @@ def test_badcount():
         print(str(err))
 
 
-def test_hashtable_n_entries():
-    countgraph = khmer._Countgraph(4, [5])
-    try:
-        countgraph.n_entries("nope")
-        assert 0, "n_entries should accept no arguments"
-    except TypeError as err:
-        print(str(err))
-
-
 def test_complete_no_collision():
     kh = khmer._Countgraph(4, [4 ** 4])
 
-    for i in range(0, kh.n_entries()):
+    n_entries = kh.hashsizes()[0]
+
+    for i in range(0, n_entries):
         s = khmer.reverse_hash(i, 4)
         kh.count(s)
 
@@ -69,7 +92,7 @@ def test_complete_no_collision():
     n_rc_filled = 0
     n_fwd_filled = 0
 
-    for i in range(0, kh.n_entries()):
+    for i in range(0, n_entries):
         s = khmer.reverse_hash(i, 4)
         if kh.get(s):                   # string hashing is rc aware
             n_rc_filled += 1
@@ -78,16 +101,17 @@ def test_complete_no_collision():
         if kh.get(i):                   # int hashing is not rc aware
             n_fwd_filled += 1
 
-    assert n_rc_filled == kh.n_entries(), n_rc_filled
+    assert n_rc_filled == n_entries, n_rc_filled
     assert n_palindromes == 16, n_palindromes
-    assert n_fwd_filled == kh.n_entries() // 2 + n_palindromes // 2, \
-        n_fwd_filled
+    assert n_fwd_filled == n_entries // 2 + n_palindromes // 2, \
+        (n_fwd_filled, n_entries // 2 + n_palindromes // 2)
 
 
 def test_complete_2_collision():
     kh = khmer._Countgraph(4, [5])
 
-    for i in range(0, kh.n_entries()):
+    n_entries = kh.hashsizes()[0]
+    for i in range(0, n_entries):
         s = khmer.reverse_hash(i, 4)
         kh.count(s)
 
@@ -102,13 +126,14 @@ def test_complete_2_collision():
     #        n_fwd_filled += 1
 
     assert n_rc_filled == 128, n_rc_filled
-    # @CTB assert n_fwd_filled == 100 # kt.n_entries() / 2, n_fwd_filled
 
 
 def test_complete_4_collision():
     kh = khmer._Countgraph(4, [3])
 
-    for i in range(0, kh.n_entries()):
+    n_entries = kh.hashsizes()[0]
+
+    for i in range(0, n_entries):
         s = khmer.reverse_hash(i, 4)
         kh.count(s)
 
@@ -123,7 +148,6 @@ def test_complete_4_collision():
     #       n_fwd_filled += 1
 
     assert n_rc_filled == 64, n_rc_filled
-    # @CTB assert n_fwd_filled == kt.n_entries() / 2, n_fwd_filled
 
 
 def test_maxcount():
@@ -321,57 +345,6 @@ class Test_ConsumeString(object):
             assert 0, "n_occupied shouldn't accept three arguments"
         except TypeError as err:
             print(str(err))
-
-    def test_abundance_by_pos(self):
-        kh = self.kh
-
-        for _ in range(0, 300):
-            kh.count('ATCG')
-
-        for _ in range(0, 10):
-            kh.count('ATGG')
-
-        short_filename = utils.get_test_data('test-short.fa')
-        dist = kh.fasta_count_kmers_by_position(short_filename, 6, 10)
-        assert dist[4] == 1
-        assert sum(dist) == 1
-
-        dist = kh.fasta_count_kmers_by_position(short_filename, 6, MAX_COUNT)
-        assert dist[0] == 1, dist[0]
-        assert dist[2] == 1
-        assert sum(dist) == 2
-
-    def test_abundance_by_pos_bigcount(self):
-        kh = self.kh
-        kh.set_use_bigcount(True)       # count past MAX_COUNT
-
-        for _ in range(0, 300):
-            kh.count('ATCG')
-
-        for _ in range(0, 10):
-            kh.count('ATGG')
-
-        short_filename = utils.get_test_data('test-short.fa')
-        dist = kh.fasta_count_kmers_by_position(short_filename, 6, 10)
-        assert dist[4] == 1
-        assert sum(dist) == 1
-
-        dist = kh.fasta_count_kmers_by_position(short_filename, 6, 300)
-        assert dist[0] == 1, dist[0]
-        assert dist[2] == 1
-        assert sum(dist) == 2
-
-    def test_n_occupied_args(self):
-        assert self.kh.n_occupied() == 0
-        self.kh.consume('AAAA')
-        assert self.kh.n_occupied(0, 1) == 1
-        assert self.kh.n_occupied(1, 4 ** 4) == 0, self.kh.n_occupied()
-
-        hashvalue = khmer.forward_hash('AACT', 4)
-        self.kh.consume('AACT')
-        assert self.kh.n_occupied(0, hashvalue + 1) == 2
-        assert self.kh.n_occupied(hashvalue + 1, 4 ** 4) == 0
-        assert self.kh.n_occupied(hashvalue, hashvalue + 1) == 1
 
     def test_simple(self):
         n = self.kh.consume('AAAA')

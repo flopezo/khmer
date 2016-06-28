@@ -1,3 +1,38 @@
+# This file is part of khmer, https://github.com/dib-lab/khmer/, and is
+# Copyright (C) 2010-2015, Michigan State University.
+# Copyright (C) 2015, The Regents of the University of California.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are
+# met:
+#
+#     * Redistributions of source code must retain the above copyright
+#       notice, this list of conditions and the following disclaimer.
+#
+#     * Redistributions in binary form must reproduce the above
+#       copyright notice, this list of conditions and the following
+#       disclaimer in the documentation and/or other materials provided
+#       with the distribution.
+#
+#     * Neither the name of the Michigan State University nor the names
+#       of its contributors may be used to endorse or promote products
+#       derived from this software without specific prior written
+#       permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Contact: khmer-project@idyll.org
+
 # Should we use the standard system zlib and libbz2?
 
 USE_SYSTEM_ZLIB ?= false
@@ -56,7 +91,7 @@ CPPFLAGS += $(SEQAN_FLAGS)
 
 CXXFLAGS ?=
 CXXFLAGS += $(COMMON_FLAGS) $(WARNINGS)
-CXXFLAGS += -Wstrict-null-sentinel
+CXXFLAGS += -Wstrict-null-sentinel -std=c++11
 CXXFLAGS += $(INCLUDES) $(CPPFLAGS)
 
 CFLAGS	 ?=
@@ -115,27 +150,25 @@ endif
 ifneq ($(PACKAGE_VERSION),)
 VERSION = $(PACKAGE_VERSION)
 else
-VERSION = $(shell ./get_version.py)
-endif
-
-MAJOR_VERSION = $(shell echo $(VERSION) | sed -e 's/^\([^-\.]*\)\.\([^-\.]*\).*/\1/')
-MINOR_VERSION = $(shell echo $(VERSION) | sed -e 's/^\([^-\.]*\)\.\([^-\.]*\).*/\2/')
-
-LIB_VERSION = $(MAJOR_VERSION).$(MINOR_VERSION)
-
-ifeq ($(shell uname), Darwin)
-SHARED_EXT   = dylib
-SONAME       = liboxli.$(SHARED_EXT).$(MAJOR_VERSION)
-SONAME_FLAGS = -install_name $(PREFIX)/lib/$(SONAME) -compatibility_version $(MAJOR_VERSION) -current_version $(LIB_VERSION)
-else
-SHARED_EXT   = so
-SONAME       = liboxli.$(SHARED_EXT).$(MAJOR_VERSION)
-SONAME_FLAGS = -Wl,-soname=$(SONAME)
+VERSION = $(./setup.py version | grep Version | awk '{print $2}')
 endif
 
 # The ABI version of liboxli
-LIBVERSION = 1
-LIBKHMERSO=liboxli.$(SHARED_EXT).$(LIB_VERSION)
+LIB_VERSION = 1
+
+ifeq ($(shell uname), Darwin)
+SHARED_EXT   = dylib
+SONAME       = liboxli.$(SHARED_EXT).$(LIB_VERSION)
+SONAME_FLAGS = -install_name $(PREFIX)/lib/$(SONAME) \
+	       -compatibility_version $(LIB_VERSION) \
+	       -current_version $(LIB_VERSION)
+else
+SHARED_EXT   = so
+SONAME       = liboxli.$(SHARED_EXT).$(LIB_VERSION)
+SONAME_FLAGS = -Wl,-soname=$(SONAME)
+endif
+
+LIBKHMERSO=$(SONAME)
 
 CXXFLAGS += -DVERSION=$(VERSION)
 
@@ -195,6 +228,7 @@ LIBKHMER_OBJS= \
 	hllcounter.o \
 	kmer_hash.o \
 	labelhash.o \
+	traversal.o \
 	read_aligner.o \
 	read_parsers.o \
 	subset.o \
@@ -223,7 +257,7 @@ KHMER_HEADERS= \
 	khmer.hh \
 	kmer_hash.hh \
 	labelhash.hh \
-	primes.hh \
+	traversal.hh \
 	read_aligner.hh \
 	read_parsers.hh \
 	subset.hh \
@@ -248,8 +282,7 @@ install: $(LIBKHMERSO) liboxli.a oxli.pc $(KHMER_HEADERS)
 		$(PREFIX)/include/oxli/
 	cp oxli.pc $(PREFIX)/lib/pkgconfig/
 	cp $(LIBKHMERSO) liboxli.a $(PREFIX)/lib
-	ln -sf $(PREFIX)/lib/$(LIBKHMERSO) $(PREFIX)/lib/$(SONAME)
-	ln -sf $(PREFIX)/lib/$(SONAME) $(PREFIX)/lib/liboxli.$(SHARED_EXT)
+	ln -sf $(PREFIX)/lib/$(LIBKHMERSO) $(PREFIX)/lib/liboxli.$(SHARED_EXT)
 
 oxli.pc: oxli.pc.in
 	sed -e 's,@prefix@,$(PREFIX),'  -e 's,@VERSION@,$(VERSION),' $< >$@
@@ -269,7 +302,6 @@ murmur3.o: ../third-party/smhasher/MurmurHash3.cc
 
 $(LIBKHMERSO): $(LIBKHMER_OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(SONAME_FLAGS) -shared -o $@ $^
-	ln -sf $(LIBKHMERSO) $(SONAME)
 	ln -sf $(SONAME) liboxli.$(SHARED_EXT)
 
 liboxli.a: $(LIBKHMER_OBJS)

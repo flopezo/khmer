@@ -1,10 +1,40 @@
-//
-// This file is part of khmer, https://github.com/dib-lab/khmer/, and is
-// Copyright (C) Michigan State University, 2009-2015. It is licensed under
-// the three-clause BSD license; see LICENSE.
-// Contact: khmer-project@idyll.org
-//
+/*
+This file is part of khmer, https://github.com/dib-lab/khmer/, and is
+Copyright (C) 2010-2015, Michigan State University.
+Copyright (C) 2015-2016, The Regents of the University of California.
 
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+      copyright notice, this list of conditions and the following
+      disclaimer in the documentation and/or other materials provided
+      with the distribution.
+
+    * Neither the name of the Michigan State University nor the names
+      of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written
+      permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+LICENSE (END)
+
+Contact: khmer-project@idyll.org
+*/
 #ifndef HASHTABLE_HH
 #define HASHTABLE_HH
 
@@ -26,6 +56,7 @@
 #include "khmer_exception.hh"
 #include "kmer_hash.hh"
 #include "read_parsers.hh"
+#include "traversal.hh"
 #include "subset.hh"
 
 namespace khmer
@@ -54,140 +85,35 @@ struct IParser;
 namespace khmer
 {
 
-//
-// Sequence iterator class, test.  Not really a C++ iterator yet.
-//
-
-class KMerIterator
-{
-protected:
-    const char * _seq;
-    const unsigned char _ksize;
-
-    HashIntoType _kmer_f, _kmer_r;
-    HashIntoType bitmask;
-    unsigned int _nbits_sub_1;
-    unsigned int index;
-    size_t length;
-    bool initialized;
-public:
-    KMerIterator(const char * seq, unsigned char k) : _seq(seq), _ksize(k)
-    {
-        bitmask = 0;
-        for (unsigned char i = 0; i < _ksize; i++) {
-            bitmask = (bitmask << 2) | 3;
-        }
-        _nbits_sub_1 = (_ksize*2 - 2);
-
-        index = _ksize - 1;
-        length = strlen(seq);
-        _kmer_f = 0;
-        _kmer_r = 0;
-
-        initialized = false;
-    }
-
-    HashIntoType first(HashIntoType& f, HashIntoType& r)
-    {
-        HashIntoType x;
-        x = _hash(_seq, _ksize, _kmer_f, _kmer_r);
-
-        f = _kmer_f;
-        r = _kmer_r;
-
-        index = _ksize;
-
-        return x;
-    }
-
-    HashIntoType next(HashIntoType& f, HashIntoType& r)
-    {
-        if (done()) {
-            throw khmer_exception();
-        }
-
-        if (!initialized) {
-            initialized = true;
-            return first(f, r);
-        }
-
-        unsigned char ch = _seq[index];
-        index++;
-        if (!(index <= length)) {
-            throw khmer_exception();
-        }
-
-        // left-shift the previous hash over
-        _kmer_f = _kmer_f << 2;
-
-        // 'or' in the current nt
-        _kmer_f |= twobit_repr(ch);
-
-        // mask off the 2 bits we shifted over.
-        _kmer_f &= bitmask;
-
-        // now handle reverse complement
-        _kmer_r = _kmer_r >> 2;
-        _kmer_r |= (twobit_comp(ch) << _nbits_sub_1);
-
-        f = _kmer_f;
-        r = _kmer_r;
-
-        return uniqify_rc(_kmer_f, _kmer_r);
-    }
-
-    HashIntoType first()
-    {
-        return first(_kmer_f, _kmer_r);
-    }
-    HashIntoType next()
-    {
-        return next(_kmer_f, _kmer_r);
-    }
-
-    bool done()
-    {
-        return index >= length;
-    }
-
-    unsigned int get_start_pos() const
-    {
-        return index - _ksize;
-    }
-
-    unsigned int get_end_pos() const
-    {
-        return index;
-    }
-}; // class KMerIterator
-
-class Hashtable  		// Base class implementation of a Bloom ht.
+class Hashtable: public
+    KmerFactory  		// Base class implementation of a Bloom ht.
 {
     friend class SubsetPartition;
     friend class LabelHash;
+    friend class Traverser;
+
 protected:
     unsigned int _tag_density;
 
     unsigned int    _max_count;
     unsigned int    _max_bigcount;
 
-    WordLength	    _ksize;
+    //WordLength	    _ksize;
     HashIntoType    bitmask;
     unsigned int    _nbits_sub_1;
 
     explicit Hashtable( WordLength ksize )
-        : _max_count( MAX_KCOUNT ),
-          _max_bigcount( MAX_BIGCOUNT ),
-          _ksize( ksize )
+        : KmerFactory( ksize ),
+          _max_count( MAX_KCOUNT ),
+          _max_bigcount( MAX_BIGCOUNT )
     {
         _tag_density = DEFAULT_TAG_DENSITY;
         if (!(_tag_density % 2 == 0)) {
             throw khmer_exception();
         }
-        partition = new SubsetPartition(this);
         _init_bitstuff();
+        partition = new SubsetPartition(this);
         _all_tags_spin_lock = 0;
-
     }
 
     virtual ~Hashtable( )
@@ -202,24 +128,6 @@ protected:
             bitmask = (bitmask << 2) | 3;
         }
         _nbits_sub_1 = (_ksize*2 - 2);
-    }
-
-    HashIntoType _next_hash(char ch, HashIntoType &h, HashIntoType &r) const
-    {
-        // left-shift the previous hash over
-        h = h << 2;
-
-        // 'or' in the current nt
-        h |= twobit_repr(ch);
-
-        // mask off the 2 bits we shifted over.
-        h &= bitmask;
-
-        // now handle reverse complement
-        r = r >> 2;
-        r |= (twobit_comp(ch) << _nbits_sub_1);
-
-        return uniqify_rc(h, r);
     }
 
     void _clear_all_partitions()
@@ -290,7 +198,12 @@ public:
                           BoundedCounterType &median,
                           float &average,
                           float &stddev);
+
+    // number of unique k-mers
     virtual const HashIntoType n_unique_kmers() const = 0;
+
+    // count number of occupied bins
+    virtual const HashIntoType n_occupied() const = 0;
 
     // partitioning stuff
     void _validate_pmap()
@@ -367,15 +280,6 @@ public:
                                   SeenSet * new_tags = 0);
 
 
-    void consume_fasta_and_tag_with_stoptags(const std::string &filename,
-            unsigned int &total_reads,
-            unsigned long long &n_consumed);
-    void consume_fasta_and_traverse(const std::string &filename,
-                                    unsigned int distance,
-                                    unsigned int big_threshold,
-                                    unsigned int transfer_threshold,
-                                    CountingHash &counting);
-
     void consume_partitioned_fasta(const std::string &filename,
                                    unsigned int &total_reads,
                                    unsigned long long &n_consumed);
@@ -385,77 +289,36 @@ public:
 
     virtual std::vector<HashIntoType> get_tablesizes() const = 0;
     virtual const size_t n_tables() const = 0;
-    virtual const HashIntoType n_occupied(HashIntoType start=0,
-                                          HashIntoType stop=0) const = 0;
-    virtual const HashIntoType n_entries() const = 0;
-
-    void filter_if_present(const std::string &infilename,
-                           const std::string &outputfilename);
-
-    unsigned int count_kmers_within_radius(HashIntoType kmer_f,
-                                           HashIntoType kmer_r,
-                                           unsigned int radius,
-                                           unsigned int max_count,
-                                           const SeenSet * seen=0) const;
 
     size_t trim_on_stoptags(std::string sequence) const;
 
-    void traverse_from_tags(unsigned int distance,
-                            unsigned int threshold,
-                            unsigned int num_high_todo,
-                            CountingHash &counting);
-
-    unsigned int traverse_from_kmer(HashIntoType start,
+    unsigned int traverse_from_kmer(Kmer start,
                                     unsigned int radius,
-                                    SeenSet &keeper) const;
-
-    unsigned int count_and_transfer_to_stoptags(SeenSet &keeper,
-            unsigned int threshold,
-            CountingHash &counting);
+                                    KmerSet &keeper,
+                                    unsigned int max_count = MAX_KEEPER_SIZE)
+    const;
 
     virtual void print_tagset(std::string);
     virtual void print_stop_tags(std::string);
     virtual void save_stop_tags(std::string);
     void load_stop_tags(std::string filename, bool clear_tags=true);
 
-    void identify_stop_tags_by_position(std::string sequence,
-                                        std::vector<unsigned int> &posns)
-    const;
-
     void extract_unique_paths(std::string seq,
                               unsigned int min_length,
                               float min_unique_f,
                               std::vector<std::string> &results);
 
-    void calc_connected_graph_size(const char * kmer,
+    void calc_connected_graph_size(Kmer node,
                                    unsigned long long& count,
-                                   SeenSet& keeper,
-                                   const unsigned long long threshold=0,
-                                   bool break_on_circum=false) const
-    {
-        HashIntoType r, f;
-        _hash(kmer, _ksize, f, r);
-        calc_connected_graph_size(f, r, count, keeper, threshold, break_on_circum);
-    }
-
-    void calc_connected_graph_size(const HashIntoType kmer_f,
-                                   const HashIntoType kmer_r,
-                                   unsigned long long& count,
-                                   SeenSet& keeper,
+                                   KmerSet& keeper,
                                    const unsigned long long threshold=0,
                                    bool break_on_circum=false) const;
 
     typedef void (*kmer_cb)(const char * k, unsigned int n_reads, void *data);
 
 
-    unsigned int kmer_degree(HashIntoType kmer_f, HashIntoType kmer_r) const;
-    unsigned int kmer_degree(const char * kmer_s) const
-    {
-        HashIntoType kmer_f, kmer_r;
-        _hash(kmer_s, _ksize, kmer_f, kmer_r);
-
-        return kmer_degree(kmer_f, kmer_r);
-    }
+    unsigned int kmer_degree(HashIntoType kmer_f, HashIntoType kmer_r);
+    unsigned int kmer_degree(const char * kmer_s);
 
     // return all k-mer substrings, on the forward strand.
     void get_kmers(const std::string &s, std::vector<std::string> &kmers)
@@ -468,8 +331,16 @@ public:
     // return counts of all k-mers in this string.
     void get_kmer_counts(const std::string &s,
                          std::vector<BoundedCounterType> &counts) const;
+
+    //
+    void find_high_degree_nodes(const char * sequence,
+                                SeenSet& high_degree_nodes) const;
+    unsigned int traverse_linear_path(const Kmer start_kmer,
+                                      SeenSet &adjacencies,
+                                      SeenSet &nodes, Hashtable& bf,
+                                      SeenSet &high_degree_nodes) const;
 };
-};
+}
 
 
 
